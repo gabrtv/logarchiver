@@ -1,0 +1,15 @@
+hash: 544e22b901da51e0fb1eb967bf55fd3d98ace662174f8df761c3ab1e4157c72f
+updated: 2017-07-07T13:22:28.900425495-06:00
+imports:
+- name: github.com/kelseyhightower/envconfig
+  version: f611eb38b3875cc3bd991ca91c51d06446afa14c
+- name: github.com/nats-io/go-nats
+  version: 61923ed1eaf8398000991fbbee2ef11ab5a5be0d
+- name: github.com/nats-io/nats
+  version: 0f25ebdb0f66fac3de939396a6eeb64d3cee23cd
+  subpackages:
+  - encoders/builtin
+  - util
+- name: github.com/nats-io/nuid
+  version: 3cf34f9fca4e88afa9da8eabd75e3326c9941b44
+testImports: []

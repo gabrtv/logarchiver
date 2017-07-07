@@ -1,0 +1,18 @@
+apiVersion: apps/v1beta1
+kind: Deployment
+metadata:
+  name: logarchiver
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: logarchiver
+    spec:
+      containers:
+      - name: logarchiver
+        image: gabrtv/logarchiver:canary
+        imagePullPolicy: Always
+        env:
+        - name: QUEUE_URL
+          value: "nats://nats-nats.default:4222"
