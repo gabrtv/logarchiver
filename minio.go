@@ -1,9 +1,11 @@
 package main
 
 import (
+	"fmt"
+	"io"
 	"log"
 
-	"io"
+	"time"
 
 	"github.com/minio/minio-go"
 )
@@ -32,11 +34,11 @@ func createBucket(cfg *minioConfig, c *minio.Client) error {
 	return nil
 }
 
-func uploadStream(cfg *minioConfig, c *minio.Client, r io.Reader) error {
+func uploadFile(cfg *minioConfig, c *minio.Client, r io.Reader, t time.Time) error {
 
-	objectName := "logs.out"
+	objectName := fmt.Sprintf("logs-%v.out", t.Format(time.RFC3339))
 
-	n, err := c.PutObjectStreaming(cfg.BucketName, objectName, r)
+	n, err := c.PutObject(cfg.BucketName, objectName, r, "application/octet-stream")
 	if err != nil {
 		return err
 	}

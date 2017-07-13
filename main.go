@@ -1,11 +1,14 @@
 package main
 
 import (
-	"io"
 	"log"
-	"os"
+	"time"
 
 	"sync"
+
+	"bytes"
+
+	"bufio"
 
 	"github.com/nats-io/nats"
 )
@@ -27,19 +30,18 @@ func main() {
 		log.Fatalf("failed to parse Minio configuration: %v\n", err)
 	}
 
-	r, w := io.Pipe()
-	defer w.Close()
+	ch := make(chan *nats.Msg, 64)
 
 	var wg sync.WaitGroup
 
 	wg.Add(2)
-	go recv(natsConfig, w, &wg)
-	go send(minioConfig, r, &wg)
+	go recv(natsConfig, ch, &wg)
+	go send(minioConfig, ch, &wg)
 	wg.Wait()
 
 }
 
-func recv(cfg *natsConfig, w io.Writer, wg *sync.WaitGroup) {
+func recv(cfg *natsConfig, ch chan *nats.Msg, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	c, err := nats.Connect(cfg.URL)
@@ -48,14 +50,13 @@ func recv(cfg *natsConfig, w io.Writer, wg *sync.WaitGroup) {
 	}
 	defer c.Close()
 
-	c.Subscribe(cfg.Topic, func(msg *nats.Msg) {
-		w.Write(msg.Data)
-	})
+	_, err = c.ChanSubscribe(cfg.Topic, ch)
+
 	for c.IsConnected() && !c.IsClosed() {
 	}
 }
 
-func send(cfg *minioConfig, r io.Reader, wg *sync.WaitGroup) {
+func send(cfg *minioConfig, ch chan *nats.Msg, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	mc, err := newMinioClient(cfg)
@@ -68,16 +69,18 @@ func send(cfg *minioConfig, r io.Reader, wg *sync.WaitGroup) {
 		log.Fatalf("failed to create bucket: %v\n", err)
 	}
 
+	var b bytes.Buffer
+	r := bufio.NewReader(&b)
+	tick := time.Tick(10 * time.Second)
+
 	for {
-		_, err := io.Copy(os.Stdout, r)
-		if err == io.EOF {
-			log.Println("returning after EOF")
-			return
-		}
-		if err != nil {
-			log.Fatalf("failed to io.copy: %v\n", err)
-			os.Exit(1)
+		select {
+		case msg := <-ch:
+			b.Write(msg.Data)
+		case t := <-tick:
+			if b.Len() > 0 {
+				uploadFile(cfg, mc, r, t)
+			}
 		}
 	}
-
 }
