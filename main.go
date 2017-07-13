@@ -1,29 +1,31 @@
 package main
 
 import (
-	"fmt"
 	"io"
 	"log"
 	"os"
+
 	"sync"
 
-	"github.com/nats-io/go-nats"
+	"github.com/nats-io/nats"
 )
 
-// BufferMax size of in-memory buffer before flushing to storage
-const BufferMax = 8
+const (
+	appName = "logarchiver"
+)
 
 func main() {
 	log.Println("starting log archiver...")
 
-	cfg, err := parseConfig()
+	natsConfig, err := parseNATSConfig()
 	if err != nil {
-		log.Fatalf("failed to parse configuration: %v\n", err)
+		log.Fatalf("failed to parse NATS configuration: %v\n", err)
 	}
 
-	c, err := nats.Connect(cfg.QueueURL)
-	ckerr(err, fatal)
-	defer c.Close()
+	minioConfig, err := parseMinioConfig()
+	if err != nil {
+		log.Fatalf("failed to parse Minio configuration: %v\n", err)
+	}
 
 	r, w := io.Pipe()
 	defer w.Close()
@@ -31,45 +33,51 @@ func main() {
 	var wg sync.WaitGroup
 
 	wg.Add(2)
-	go recv(c, w, &wg)
-	go send(r, &wg)
+	go recv(natsConfig, w, &wg)
+	go send(minioConfig, r, &wg)
 	wg.Wait()
 
 }
 
-func recv(c *nats.Conn, w io.Writer, wg *sync.WaitGroup) {
+func recv(cfg *natsConfig, w io.Writer, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	c.Subscribe("topic", func(msg *nats.Msg) {
+	c, err := nats.Connect(cfg.URL)
+	if err != nil {
+		log.Fatalf("failed to connect to NATS: %v\n", err)
+	}
+	defer c.Close()
+
+	c.Subscribe(cfg.Topic, func(msg *nats.Msg) {
 		w.Write(msg.Data)
 	})
 	for c.IsConnected() && !c.IsClosed() {
 	}
 }
 
-func send(r io.Reader, wg *sync.WaitGroup) {
+func send(cfg *minioConfig, r io.Reader, wg *sync.WaitGroup) {
 	defer wg.Done()
 
+	mc, err := newMinioClient(cfg)
+	if err != nil {
+		log.Fatalf("failed to connect to Minio: %v\n", err)
+	}
+
+	err = createBucket(cfg, mc)
+	if err != nil {
+		log.Fatalf("failed to create bucket: %v\n", err)
+	}
+
 	for {
-		_, err := io.CopyN(os.Stdout, r, BufferMax)
+		_, err := io.Copy(os.Stdout, r)
 		if err == io.EOF {
+			log.Println("returning after EOF")
 			return
 		}
-		ckerr(err, debug)
+		if err != nil {
+			log.Fatalf("failed to io.copy: %v\n", err)
+			os.Exit(1)
+		}
 	}
-}
 
-func ckerr(err error, fn func(error)) {
-	if err != nil {
-		fn(err)
-	}
-}
-
-func debug(err error) {
-	fmt.Fprintf(os.Stderr, "error: %v\n", err)
-}
-
-func fatal(err error) {
-	fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
-	os.Exit(1)
 }

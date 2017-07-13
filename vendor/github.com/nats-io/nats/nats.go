@@ -265,14 +265,14 @@ type Conn struct {
 	urls    map[string]struct{} // Keep track of all known URLs (used by processInfo)
 	bw      *bufio.Writer
 	pending *bytes.Buffer
-	fch     chan bool
+	fch     chan struct{}
 	info    serverInfo
 	ssid    int64
 	subsMu  sync.RWMutex
 	subs    map[int64]*Subscription
 	mch     chan *Msg
 	ach     chan asyncCB
-	pongs   []chan bool
+	pongs   []chan struct{}
 	scratch [scratchSize]byte
 	status  Status
 	initc   bool // true if the connection is performing the initial connect
@@ -922,7 +922,7 @@ func (nc *Conn) makeTLSConn() {
 func (nc *Conn) waitForExits(wg *sync.WaitGroup) {
 	// Kick old flusher forcefully.
 	select {
-	case nc.fch <- true:
+	case nc.fch <- struct{}{}:
 	default:
 	}
 
@@ -990,9 +990,9 @@ func (nc *Conn) ConnectedServerId() string {
 // Low level setup for structs, etc
 func (nc *Conn) setup() {
 	nc.subs = make(map[int64]*Subscription)
-	nc.pongs = make([]chan bool, 0, 8)
+	nc.pongs = make([]chan struct{}, 0, 8)
 
-	nc.fch = make(chan bool, flushChanSize)
+	nc.fch = make(chan struct{}, flushChanSize)
 
 	// Setup scratch outbound buffer for PUB
 	pub := nc.scratch[:len(_PUB_P_)]
@@ -1755,7 +1755,7 @@ func (nc *Conn) processPing() {
 // processPong is used to process responses to the client's ping
 // messages. We use pings for the flush mechanism as well.
 func (nc *Conn) processPong() {
-	var ch chan bool
+	var ch chan struct{}
 
 	nc.mu.Lock()
 	if len(nc.pongs) > 0 {
@@ -1765,7 +1765,7 @@ func (nc *Conn) processPong() {
 	nc.pout = 0
 	nc.mu.Unlock()
 	if ch != nil {
-		ch <- true
+		ch <- struct{}{}
 	}
 }
 
@@ -1860,7 +1860,7 @@ func (nc *Conn) processErr(e string) {
 func (nc *Conn) kickFlusher() {
 	if nc.bw != nil {
 		select {
-		case nc.fch <- true:
+		case nc.fch <- struct{}{}:
 		default:
 		}
 	}
@@ -2605,7 +2605,7 @@ func (s *Subscription) Dropped() (int, error) {
 // removeFlushEntry is needed when we need to discard queued up responses
 // for our pings as part of a flush call. This happens when we have a flush
 // call outstanding and we call close.
-func (nc *Conn) removeFlushEntry(ch chan bool) bool {
+func (nc *Conn) removeFlushEntry(ch chan struct{}) bool {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 	if nc.pongs == nil {
@@ -2621,7 +2621,7 @@ func (nc *Conn) removeFlushEntry(ch chan bool) bool {
 }
 
 // The lock must be held entering this function.
-func (nc *Conn) sendPing(ch chan bool) {
+func (nc *Conn) sendPing(ch chan struct{}) {
 	nc.pongs = append(nc.pongs, ch)
 	nc.bw.WriteString(pingProto)
 	// Flush in place.
@@ -2669,7 +2669,7 @@ func (nc *Conn) FlushTimeout(timeout time.Duration) (err error) {
 	t := globalTimerPool.Get(timeout)
 	defer globalTimerPool.Put(t)
 
-	ch := make(chan bool) // FIXME: Inefficient?
+	ch := make(chan struct{})
 	nc.sendPing(ch)
 	nc.mu.Unlock()
 
